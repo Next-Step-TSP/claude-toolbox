@@ -38,7 +38,11 @@ Requirements: a TUN device and NET_ADMIN capability for the baked-in Tailscale d
   <WebUI>http://[IP]:[PORT:7681]/</WebUI>
   <TemplateURL/>
   <Icon>https://raw.githubusercontent.com/Next-Step-TSP/claude-toolbox/main/unraid/icon/claude-toolbox.png</Icon>
-  <ExtraParams>--cap-add=NET_ADMIN --device=/dev/net/tun --init</ExtraParams>
+  <!-- - -user=0:0: the image defaults to USER node, but tailscaled and the
+       PUID/PGID remap need the entrypoint to start as root (it drops work to
+       the remapped node user itself). Unraid templates have no user field, so
+       it rides in ExtraParams. -->
+  <ExtraParams>--user=0:0 --cap-add=NET_ADMIN --device=/dev/net/tun --init</ExtraParams>
   <PostArgs>sleep infinity</PostArgs>
   <CPUset/>
   <DateInstalled/>
