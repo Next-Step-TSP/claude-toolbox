@@ -1,0 +1,97 @@
+<?xml version="1.0"?>
+<!--
+  Unraid Docker template for claude-toolbox.
+
+  This template is side-loaded (not yet submitted to Community Applications —
+  see docs/CA-CHECKLIST.md for that path). To install it on the server:
+
+    1. Copy this file to /boot/config/plugins/dockerMan/templates-user/
+       on the Unraid box (see docs/UNRAID.md for the full runbook).
+    2. In the Unraid web UI: Docker tab -> Add Container -> select
+       "claude-toolbox" from the template dropdown.
+
+  ghcr.io/next-step-tsp/claude-toolbox is currently a PRIVATE package. The
+  Unraid host must have already run `docker login ghcr.io` (persisted via
+  unraid/go-snippet.sh appended to /boot/config/go) or the pull will fail
+  with "unauthorized" until the image is flipped public.
+-->
+<Container version="2">
+  <Name>claude-toolbox</Name>
+  <Repository>ghcr.io/next-step-tsp/claude-toolbox:latest</Repository>
+  <Registry>https://github.com/Next-Step-TSP/claude-toolbox/pkgs/container/claude-toolbox</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/Next-Step-TSP/claude-toolbox/issues</Support>
+  <Project>https://github.com/Next-Step-TSP/claude-toolbox</Project>
+  <Overview>
+Claude Code (Anthropic's agentic coding CLI) paired with an M365/Azure PowerShell administration toolbox, packaged as NSTSP's standard internal Claude Code image.&#13;
+&#13;
+Installed: Node.js 24 LTS on Debian 13 (trixie), PowerShell 7.6.3 with the Az, Microsoft.Graph, PnP.PowerShell, and ExchangeOnlineManagement modules preinstalled, Python 3, GitHub CLI (gh), tmux, and a baked-in Tailscale client. Claude Code itself is not version-pinned - the entrypoint keeps it current automatically.&#13;
+&#13;
+On start, the container joins your Tailscale tailnet as its own SSH-able node (Tailscale SSH - no keys or passwords; authentication rides your tailnet identity), and can optionally expose a browser-based terminal (ttyd) for phone/tablet access without a separate SSH client.&#13;
+&#13;
+Requirements: a TUN device and NET_ADMIN capability for the baked-in Tailscale daemon (already set via this template's extra parameters), a reusable Tailscale auth key for the first tailnet join (see the TS_AUTHKEY variable below), and - while this image remains a private GHCR package - a `docker login ghcr.io` already performed on the Unraid host. See the project repo's docs/UNRAID.md for the full deployment and cutover runbook.
+  </Overview>
+  <Category>Tools: Utilities: Productivity:</Category>
+  <WebUI>http://[IP]:[PORT:7681]/</WebUI>
+  <TemplateURL/>
+  <Icon>https://raw.githubusercontent.com/Next-Step-TSP/claude-toolbox/main/unraid/icon/claude-toolbox.png</Icon>
+  <ExtraParams>--cap-add=NET_ADMIN --device=/dev/net/tun --init</ExtraParams>
+  <PostArgs>sleep infinity</PostArgs>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires>
+This container runs its own tailscaled and needs a TUN device plus the NET_ADMIN capability - both already supplied via this template's ExtraParams (--cap-add=NET_ADMIN --device=/dev/net/tun --init); no manual Docker-tab edit is needed.&#13;
+&#13;
+Leave Unraid's native per-container "Use Tailscale" toggle OFF for this container. That feature injects Unraid's own tailscaled into the container and is mutually exclusive with the one this image manages itself - running both will conflict.&#13;
+&#13;
+While ghcr.io/next-step-tsp/claude-toolbox is a private package, the Unraid host must already be authenticated to GHCR (docker login ghcr.io with a read:packages PAT) before this template will pull successfully. See unraid/go-snippet.sh and docs/UNRAID.md. This requirement goes away once the image is flipped public (docs/CA-CHECKLIST.md).
+  </Requires>
+
+  <!-- ================================ Paths ================================ -->
+  <Config Name="Home" Target="/home/node" Default="/mnt/user/appdata/claude-toolbox/home" Mode="rw" Description="Container user (node) home directory: npm-global install of Claude Code, per-profile Claude Code logins/settings (~/.claude-&lt;name&gt;), shell history and dotfiles. Must persist - losing this means re-authenticating every Claude Code profile." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/claude-toolbox/home</Config>
+
+  <Config Name="TailscaleState" Target="/var/lib/tailscale" Default="/mnt/user/appdata/claude-toolbox/tailscale" Mode="rw" Description="Tailscale node state (machine key, tailnet identity). Persisting this lets the container rejoin the tailnet on restart without a fresh auth key." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/claude-toolbox/tailscale</Config>
+
+  <Config Name="Workspace" Target="/workspace" Default="/mnt/user/claude-workspace" Mode="rw" Description="Working directory root. Expected to contain OneDrive-synced SharePoint content (kept current by one or more abraunegg onedrive containers running alongside this one) plus a persistent repos/ folder where Next-Step-TSP GitHub repos are cloned and managed with gh/git inside the container. See docs/UNRAID.md." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/claude-workspace</Config>
+
+  <!-- ================================ Ports ================================ -->
+  <Config Name="ttyd Web Terminal" Target="7681" Default="7681" Mode="tcp" Description="Browser-based terminal (ttyd), reachable at the WebUI button above. No built-in authentication - only expose this on your tailnet/LAN, never forwarded to the public internet. Only active when TTYD_ENABLE=1." Type="Port" Display="always" Required="false" Mask="false">7681</Config>
+
+  <!-- ============================== Variables ============================== -->
+  <Config Name="TS_ENABLE" Target="TS_ENABLE" Default="1" Mode="" Description="Start tailscaled and join the tailnet on container start. Set to 0 to disable Tailscale entirely (local-only container)." Type="Variable" Display="always" Required="true" Mask="false">1</Config>
+
+  <Config Name="TS_HOSTNAME" Target="TS_HOSTNAME" Default="claude-code" Mode="" Description="Tailnet machine name this container appears as. Set to claude-code to inherit the identity previously used by the PC-based remote box (see the cutover steps in docs/UNRAID.md before reusing this name)." Type="Variable" Display="always" Required="true" Mask="false">claude-code</Config>
+
+  <Config Name="TS_AUTHKEY" Target="TS_AUTHKEY" Default="" Mode="" Description="Tailscale reusable auth key (tskey-auth-...), needed only for the FIRST tailnet join. Once joined, the node identity persists in the TailscaleState path above and reconnects on restart without this key. Blank it out again after the first successful join." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+
+  <Config Name="TS_USERSPACE" Target="TS_USERSPACE" Default="0" Mode="" Description="Advanced: set to 1 to run tailscaled in userspace-networking mode (no TUN device / NET_ADMIN required). Default 0 uses kernel TUN, which is what this template's ExtraParams provision." Type="Variable" Display="advanced" Required="false" Mask="false">0</Config>
+
+  <Config Name="TS_EXTRA_ARGS" Target="TS_EXTRA_ARGS" Default="" Mode="" Description="Advanced: extra arguments appended to `tailscale up`, e.g. --advertise-tags=tag:server. Usually left blank." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+
+  <Config Name="TTYD_ENABLE" Target="TTYD_ENABLE" Default="1" Mode="" Description="Enable the ttyd browser terminal (see the WebUI button and port above). Set to 0 to disable if you only intend to use Tailscale SSH." Type="Variable" Display="always" Required="true" Mask="false">1</Config>
+
+  <Config Name="TTYD_PORT" Target="TTYD_PORT" Default="7681" Mode="" Description="Advanced: port ttyd listens on inside the container. Change only if you also remap the port mapping above to match." Type="Variable" Display="advanced" Required="false" Mask="false">7681</Config>
+
+  <Config Name="CLAUDE_PROFILES" Target="CLAUDE_PROFILES" Default="nstsp extra" Mode="" Description="Space-separated Claude Code account profile names. Each becomes a claude-&lt;name&gt; command with its own isolated login/config dir (~/.claude-&lt;name&gt;), so multiple accounts can run side by side." Type="Variable" Display="always" Required="true" Mask="false">nstsp extra</Config>
+
+  <Config Name="CLAUDE_MARKETPLACES" Target="CLAUDE_MARKETPLACES" Default="Next-Step-TSP/nstsp-claude-marketplace" Mode="" Description="Advanced: private Claude Code plugin marketplace(s) to register at runtime for each profile (space-separated if more than one). Fetched with the deployment's own git/gh credentials - never baked into the image." Type="Variable" Display="advanced" Required="false" Mask="false">Next-Step-TSP/nstsp-claude-marketplace</Config>
+
+  <Config Name="CLAUDE_PLUGINS" Target="CLAUDE_PLUGINS" Default="core-toolkit@nstsp" Mode="" Description="Advanced: plugin(s) to install from the marketplace(s) above for each profile (space-separated if more than one)." Type="Variable" Display="advanced" Required="false" Mask="false">core-toolkit@nstsp</Config>
+
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="User ID the node user is remapped to on start (Unraid convention: 99 = nobody). Aligns file ownership under the Home and Workspace paths with the rest of the array." Type="Variable" Display="always" Required="true" Mask="false">99</Config>
+
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Group ID the node user is remapped to on start (Unraid convention: 100 = users)." Type="Variable" Display="always" Required="true" Mask="false">100</Config>
+
+  <Config Name="TZ" Target="TZ" Default="America/Edmonton" Mode="" Description="Timezone for container logs and timestamps." Type="Variable" Display="always" Required="true" Mask="false">America/Edmonton</Config>
+
+  <Config Name="UMASK" Target="UMASK" Default="022" Mode="" Description="Advanced: umask applied to files created by the entrypoint under the remapped node user." Type="Variable" Display="advanced" Required="false" Mask="false">022</Config>
+
+  <Config Name="UPDATE_CLAUDE_ON_START" Target="UPDATE_CLAUDE_ON_START" Default="1" Mode="" Description="Advanced: re-install the latest Claude Code on every container start (and periodically while it stays running). Set to 0 to pin whatever version is already installed in the Home path." Type="Variable" Display="advanced" Required="false" Mask="false">1</Config>
+
+  <Config Name="ANTHROPIC_API_KEY" Target="ANTHROPIC_API_KEY" Default="" Mode="" Description="Advanced/optional: use an Anthropic API key instead of interactive subscription login for Claude Code. Leave blank to log in interactively per profile." Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+</Container>

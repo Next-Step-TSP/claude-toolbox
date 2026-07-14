@@ -1,27 +1,32 @@
-# Claude Code in Docker
+# claude-toolbox
 
-A custom Linux image that runs [Claude Code](https://www.anthropic.com/claude-code)
-in a container, with an M365 / Azure PowerShell admin toolbox baked in.
+NSTSP's standard [Claude Code](https://www.anthropic.com/claude-code) image: a
+Linux container that runs Claude Code alongside an M365/Azure PowerShell
+administration toolbox, with baked-in Tailscale SSH for remote/phone access.
+Built and published to GHCR by CI; usable locally via Docker Compose on a PC,
+or deployed persistently on the NSTSP Unraid server.
 
 ## What's installed
 
-| Tool | Version (at build) |
+| Tool | Version |
 | --- | --- |
 | Claude Code | kept current automatically — see [Claude Code updates](#claude-code-updates) |
-| Node.js | 22 |
-| PowerShell | 7.6.3 |
-| Python | 3.11 |
-| GitHub CLI (`gh`) | 2.95 |
+| Node.js | 24 (Active LTS) on Debian 13 "trixie" |
+| PowerShell | 7.6.3 (LTS, .NET 10) |
+| Python | 3 (Debian trixie's `python3`) |
+| GitHub CLI (`gh`) | current stable, via GitHub's apt repo |
 | git, ripgrep | system |
-| Az (PowerShell) | Az.Accounts 5.5, Az.Resources 10, full Az |
-| Microsoft.Graph | Authentication, Users, Groups, Sites, Files, Mail (2.38) |
-| PnP.PowerShell | 3.2 |
-| ExchangeOnlineManagement | 3.10 |
-| Tailscale | 1.98 (for remote/phone access) |
-| tmux | 3.3a (detachable sessions) |
+| Az (PowerShell) | full `Az` module |
+| Microsoft.Graph | Authentication, Users, Groups, Sites, Files, Mail |
+| PnP.PowerShell | current |
+| ExchangeOnlineManagement | current |
+| Tailscale | current stable, via Tailscale's trixie apt channel (for remote/phone access) |
+| tmux | detachable terminal sessions |
+| ttyd | optional browser-based terminal (`TTYD_ENABLE=1`) |
 
-Runs as the non-root `node` user (uid 1000). The Tailscale daemon is dormant
-unless you start the `remote` profile (below).
+Runs as the non-root `node` user. The Tailscale daemon and ttyd are both
+dormant unless enabled (`TS_ENABLE=1`, `TTYD_ENABLE=1`) — see
+[Remote / phone access](#remote--phone-access-tailscale-ssh) below.
 
 ## Files
 
@@ -29,13 +34,21 @@ unless you start the `remote` profile (below).
 | --- | --- |
 | `Dockerfile` | Image definition. |
 | `install-psmodules.ps1` | PowerShell modules installed during build. |
-| `docker-compose.yml` | Mounts SharePoint folders + persists login; defines local + remote services. |
-| `entrypoint.sh` | Conditionally brings up Tailscale, sets up the multi-account `claude-<name>` profiles, then runs the command. |
-| `run.ps1` | Convenience launcher for local use (build + run). |
-| `remote.ps1` | Manage the persistent Tailscale box (up/down/status). |
-| `.env.example` | API-key + Tailscale config. |
+| `entrypoint.sh` | Brings up Tailscale/ttyd as configured, sets up multi-account `claude-<name>` profiles, runs the plugin bootstrap, then runs the command. |
+| `healthcheck.sh` | Container `HEALTHCHECK` — validates the tailnet connection when Tailscale is enabled, otherwise a basic liveness check. |
+| `docker-compose.yml` | Mounts SharePoint folders + persists login; defines local + remote services for PC use. |
+| `.env.example` | API-key, Tailscale, and profile config for PC/Compose use. |
+| `run.ps1` | Convenience launcher for local PC use (build + run). |
+| `remote.ps1` | Manage the persistent PC-hosted Tailscale box (up/down/status). |
+| `.github/workflows/publish.yml` | CI: builds and pushes the image to GHCR. |
+| `.github/dependabot.yml` | Weekly dependency updates for the base image and pinned Actions. |
+| `unraid/claude-toolbox.xml` | Unraid Docker template (side-loaded today; see [Unraid deployment](#unraid-deployment)). |
+| `unraid/go-snippet.sh` | Persists `docker login ghcr.io` across Unraid reboots. |
+| `unraid/icon/` | Template icon asset (512x512 PNG — **not yet created**, see the TODO in that folder). |
+| `docs/UNRAID.md` | Full Unraid deployment + cutover runbook. |
+| `docs/CA-CHECKLIST.md` | Deferred checklist for a future public Community Applications listing. |
 
-## Mounts
+## Mounts (PC / Compose use)
 
 Two OneDrive-synced SharePoint folders are bind-mounted (the container uses the
 local copy; OneDrive handles cloud sync — no second sync engine):
@@ -49,7 +62,11 @@ local copy; OneDrive handles cloud sync — no second sync engine):
 > device"** in OneDrive — Files On-Demand placeholders don't materialize inside
 > a Linux container.
 
-## Quick start
+(On the Unraid deployment, the equivalent content is kept current by
+Linux-side `onedrive` sync containers instead of a Windows OneDrive client —
+see `docs/UNRAID.md`.)
+
+## Quick start (PC)
 
 ```powershell
 .\run.ps1            # launch Claude Code
@@ -119,8 +136,13 @@ docker compose run --rm claude pwsh     # PowerShell
 
 The container joins your tailnet as its **own machine** named `claude-code`
 (it runs its own `tailscaled`). You SSH **directly to the container**, not through
-the PC. Tailscale's daemon is the SSH server — there are **no passwords and no SSH
-keys**; auth is your tailnet identity.
+the host. Tailscale's daemon is the SSH server — there are **no passwords and no
+SSH keys**; auth is your tailnet identity.
+
+A browser-based alternative is also available: with `TTYD_ENABLE=1`, ttyd
+serves a terminal over HTTP on port 7681 (`TTYD_PORT`) — useful when a
+tailnet SSH client isn't handy, but note it has **no built-in authentication**
+of its own, so only ever expose that port on the tailnet/LAN.
 
 ### One-time setup
 
@@ -129,7 +151,7 @@ keys**; auth is your tailnet identity.
    account. Install an SSH terminal app on the phone (ConnectBot, Termius, etc.).
 2. **Generate an auth key:** <https://login.tailscale.com/admin/settings/keys>
    - Use a reusable, non-ephemeral key so the box survives restarts.
-   - ⚠️ The key is shown **only once** — copy the whole string in one go. A valid
+   - The key is shown **only once** — copy the whole string in one go. A valid
      key starts with `tskey-auth-`. If yours doesn't, it was truncated on paste —
      generate a fresh one. (`backend error: invalid key: API key does not exist`
      in the logs = a bad/incomplete/expired key.)
@@ -146,6 +168,10 @@ keys**; auth is your tailnet identity.
 
 After it joins, `claude-code` appears in the Tailscale admin console alongside
 your other machines.
+
+> This PC-hosted remote box is being superseded by a persistent Unraid
+> deployment that inherits the same `claude-code` tailnet identity — see
+> [Unraid deployment](#unraid-deployment).
 
 ### Connect from the phone (ConnectBot on Android)
 
@@ -173,26 +199,76 @@ claude
 
 ### Notes
 
-- The PC must be **awake with Docker running** (sleep was disabled here — see
-  Maintenance below).
+- The host must be **awake with Docker running** (on the PC deployment; the
+  Unraid deployment is always-on by nature).
 - Your Claude login and SharePoint mounts are identical to local use (shared
   `claude-home` volume and the same binds).
 - After the first successful join you can **blank `TS_AUTHKEY` in `.env`** — the
   node identity persists in the `tailscale-state` volume and re-authenticates on
-  restart without a key. (Done here, so no live key sits in the synced folder.)
+  restart without a key.
 - To re-key later (e.g. identity wiped), put a fresh key back in `.env` and run
   `docker compose --profile remote up -d --force-recreate claude-remote`.
 
-## This deployment (as configured)
+## GHCR image and tags
 
-| Item | Value |
+CI (`.github/workflows/publish.yml`) builds `linux/amd64` and pushes to
+`ghcr.io/next-step-tsp/claude-toolbox` on every push to `main`, on `v*` tags,
+weekly (security repave of `:latest`), and on manual dispatch. Tags produced:
+
+| Trigger | Tags |
 | --- | --- |
-| Container tailnet name | `claude-code` |
-| SSH user | `node` (no password) |
-| Phone client | ConnectBot, connecting to `node@claude-code` |
-| PC sleep | disabled (`powercfg /change standby-timeout-ac/dc 0`) |
-| Auth key in `.env` | blanked (identity persisted in `tailscale-state` volume) |
-| Restart policy | `unless-stopped` (box comes back after reboot/Docker restart) |
+| `v1.2.3` tag | `1.2.3`, `1.2`, `1`, `latest`, plus a `sha-<short>` tag |
+| push to `main` | `main`, `latest`, plus a `sha-<short>` tag |
+| weekly cron | re-pushes `latest` (and its `sha` tag) from `main`, picking up upstream security patches |
+
+The package is currently **private** — pulling it (from a PC or from Unraid)
+requires `docker login ghcr.io` with a GitHub PAT scoped to `read:packages`.
+See `docs/CA-CHECKLIST.md` for the plan to flip it public.
+
+## Environment variable reference
+
+This is the full set of variables the image understands, across both the
+Compose (PC) and Unraid deployment paths. Not every variable is wired into
+`docker-compose.yml` today — check that file / `.env.example` for what the PC
+path currently forwards, and `unraid/claude-toolbox.xml` for the Unraid
+template's defaults.
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `TS_ENABLE` | `0` (unset) | Start `tailscaled` and join the tailnet on container start. |
+| `TS_AUTHKEY` | _(blank)_ | Tailscale reusable auth key, needed only for the first tailnet join; blank it out once joined. |
+| `TS_HOSTNAME` | `claude-code` | Tailnet machine name this container appears as. |
+| `TS_EXTRA_ARGS` | _(blank)_ | Extra arguments appended to `tailscale up`. |
+| `TS_USERSPACE` | `0` | Run `tailscaled` in userspace-networking mode (no TUN/NET_ADMIN needed) instead of kernel TUN. |
+| `TTYD_ENABLE` | `0` (unset) | Enable the ttyd browser terminal on `TTYD_PORT`. |
+| `TTYD_PORT` | `7681` | Port ttyd listens on. |
+| `PUID` | _(unset — PC path runs as the built-in `node` uid)_ | Remaps the `node` user's UID at start (Unraid convention: `99`). |
+| `PGID` | _(unset)_ | Remaps the `node` user's GID at start (Unraid convention: `100`). |
+| `TZ` | _(unset — container default)_ | Timezone for logs/timestamps. |
+| `UMASK` | `022` | Umask applied to files the entrypoint creates. |
+| `CLAUDE_PROFILES` | `nstsp extra` | Space-separated Claude Code account profile names — see [Multiple Claude accounts](#multiple-claude-accounts). |
+| `CLAUDE_MARKETPLACES` | _(blank)_ | Private Claude Code plugin marketplace(s) to register at runtime, per profile. Never baked into the image. |
+| `CLAUDE_PLUGINS` | _(blank)_ | Plugin(s) to install from the marketplace(s) above, per profile. |
+| `UPDATE_CLAUDE_ON_START` | `1` | Re-install the latest Claude Code on every start (and periodically while the container stays up). Set `0` to pin the existing install. |
+| `ANTHROPIC_API_KEY` | _(blank)_ | Use an API key instead of interactive subscription login. |
+
+## Unraid deployment
+
+The always-on NSTSP Unraid server runs `claude-toolbox` persistently,
+replacing the PC-hosted remote box and inheriting its `claude-code` tailnet
+identity. Server-side setup, the OneDrive sync containers, the tailnet
+cutover from the PC box, and a verification checklist are all in
+**[`docs/UNRAID.md`](docs/UNRAID.md)**. The Unraid Docker template itself is
+`unraid/claude-toolbox.xml`.
+
+## Community Applications (CA) roadmap
+
+This repo and image are private for now. There's a deferred checklist for
+eventually making the repo/image public and submitting a template to
+Unraid's Community Applications — see
+**[`docs/CA-CHECKLIST.md`](docs/CA-CHECKLIST.md)**. Notably: the "Claude
+Toolbox" name leans on Anthropic's trademark and needs a naming review
+before any public listing.
 
 ## Claude Code updates
 
@@ -200,12 +276,14 @@ Claude Code is **not version-pinned** and updates itself automatically — no
 manual `npm update` or image rebuild needed going forward:
 
 - The npm global prefix (`/home/node/.npm-global`) is owned by the `node`
-  user and lives inside the persisted `claude-home` volume.
+  user and lives inside the persisted home directory (the `claude-home`
+  volume on the PC path; the Home path on the Unraid template).
 - `entrypoint.sh` runs `npm install -g @anthropic-ai/claude-code@latest`
-  every time a container starts. For the local `claude` service
-  (`docker compose run --rm`), that's every launch. For the persistent
-  `claude-remote` box, it also re-checks every 24 hours in the background
-  so a box left running for weeks doesn't go stale.
+  every time a container starts (gated by `UPDATE_CLAUDE_ON_START`, default
+  on). For the local `claude` service (`docker compose run --rm`), that's
+  every launch. For a persistent box (PC `claude-remote` or the Unraid
+  deployment), it also re-checks periodically in the background so a box
+  left running for weeks doesn't go stale.
 - Update failures (e.g. no internet) are logged and non-fatal — the
   container falls back to whichever version is already installed.
 
@@ -215,14 +293,14 @@ To check the version Claude Code is currently running:
 docker compose run --rm claude bash -c "claude --version"
 ```
 
-If you ever want to force a fresh check on the remote box without waiting
-for the daily refresh:
+If you ever want to force a fresh check on a persistent box without waiting
+for the periodic refresh:
 
 ```powershell
 docker compose exec claude-remote npm install -g @anthropic-ai/claude-code@latest
 ```
 
-## Maintenance
+## Maintenance (PC)
 
 ```powershell
 # Is the box up and on the tailnet?
@@ -232,12 +310,9 @@ docker compose exec claude-remote tailscale status
 # Stop / start the remote box
 docker compose --profile remote down
 docker compose --profile remote up -d claude-remote
-
-# Re-confirm PC won't sleep
-powercfg /query SCHEME_CURRENT SUB_SLEEP STANDBYIDLE
 ```
 
-## Reset saved login/settings
+## Reset saved login/settings (PC)
 
 ```powershell
 docker volume rm docker_claude-home       # Claude + M365 logins
@@ -252,5 +327,6 @@ docker volume rm docker_tailscale-state   # Tailscale node identity (needs re-ke
 | `invalid key: API key does not exist` in `docker compose logs claude-remote` | Bad/incomplete/expired `TS_AUTHKEY`. Generate a fresh key (starts with `tskey-auth-`), paste it whole, `--force-recreate`. |
 | ConnectBot keeps asking for a key/password | Set "Use pubkey authentication" to **none**; leave password blank. |
 | Hostname `claude-code` won't resolve | Use it via the phone's Tailscale (MagicDNS); if still failing, get the IP from `.\remote.ps1 ssh-info`. |
-| Mounted folder looks empty in the container | OneDrive Files On-Demand — set the folder to "Always keep on this device". |
+| Mounted folder looks empty in the container | OneDrive Files On-Demand — set the folder to "Always keep on this device" (PC path), or check the Unraid `onedrive` sync container's status (Unraid path). |
 | Box unreachable after the PC rebooted | Ensure Docker Desktop is running; the container auto-restarts (`unless-stopped`) once Docker is up. |
+| Unraid: image pull fails with "unauthorized" | GHCR login on the Unraid host has expired or was never persisted — see `docs/UNRAID.md` and `unraid/go-snippet.sh`. |

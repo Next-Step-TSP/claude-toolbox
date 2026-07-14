@@ -1,0 +1,80 @@
+name: Publish image to GHCR
+
+# Build claude-toolbox and publish it to the private GHCR package
+# ghcr.io/next-step-tsp/claude-toolbox.
+#
+# Triggers:
+#   - push to main            -> refresh :latest and :main
+#   - push of a v* tag        -> cut a versioned release (:1.2.3, :1.2, :1, :latest)
+#   - weekly schedule (cron)  -> repave :latest with upstream security patches
+#   - manual dispatch         -> on-demand rebuild
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  schedule:
+    # Mondays at 09:00 UTC (quiet time) — weekly security repave of :latest.
+    - cron: "0 9 * * 1"
+  workflow_dispatch:
+
+# Least-privilege: read the repo, write the GHCR package.
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE: ghcr.io/next-step-tsp/claude-toolbox
+
+jobs:
+  build-and-push:
+    name: Build & push (linux/amd64)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract image metadata (tags & labels)
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.IMAGE }}
+          # latest=auto -> v* tags also get :latest.
+          # The raw latest tag below additionally covers main pushes AND the
+          # weekly cron run (both resolve to the default branch), so scheduled
+          # repaves actually refresh :latest.
+          flavor: |
+            latest=auto
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=ref,event=branch
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha
+
+      - name: Build and push image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true

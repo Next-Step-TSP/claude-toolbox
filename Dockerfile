@@ -1,10 +1,22 @@
-# Custom image to run Claude Code in a Linux container, with an M365/Azure
-# PowerShell admin toolbox baked in.
-# Base: Node.js LTS (Claude Code is a Node CLI and needs Node 18+).
-FROM node:22-bookworm-slim
+# claude-toolbox: NSTSP standard Claude Code image, with an M365/Azure
+# PowerShell admin toolbox, Tailscale SSH, tmux and an optional ttyd web
+# terminal baked in.
+#
+# Base: Node.js 24 (Active LTS) on Debian 13 "trixie". Node 24 is the runtime
+# Claude Code needs; trixie is the current Debian stable and the required
+# foundation now that PowerShell dropped Debian 12 support (2026-06-10).
+FROM node:24-trixie-slim
 
-# Pinned PowerShell version (latest stable 7.6 line as of build authoring).
+# OCI metadata (links the GHCR package back to the repo for provenance).
+LABEL org.opencontainers.image.source="https://github.com/Next-Step-TSP/claude-toolbox" \
+      org.opencontainers.image.title="claude-toolbox" \
+      org.opencontainers.image.description="NSTSP standard Claude Code image: M365/Azure PowerShell toolbox, Tailscale SSH, tmux, optional ttyd web terminal."
+
+# Pinned PowerShell version (latest 7.6 LTS line, .NET 10, as of build authoring).
 ARG PWSH_VERSION=7.6.3
+# Pinned ttyd release (see the ttyd install layer below for why this is a
+# static binary rather than the trixie apt package).
+ARG TTYD_VERSION=1.7.7
 
 ENV DEBIAN_FRONTEND=noninteractive \
     POWERSHELL_TELEMETRY_OPTOUT=1 \
@@ -15,17 +27,21 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # ---------------------------------------------------------------------------
 # OS packages: dev/runtime tools + PowerShell deps + Python + gh CLI repo.
-#   git, ripgrep, less, procps, openssh-client, curl, ca-certificates  -> dev basics + Claude Code
-#   libicu72, libssl3, locales                                          -> PowerShell runtime deps
-#   python3, python3-pip, python3-venv, python-is-python3               -> Python
-#   gnupg                                                               -> apt key handling
+#   git, ripgrep, less, procps, openssh-client, curl, wget, ca-certificates  -> dev basics + Claude Code
+#   libicu76, libssl3t64, locales                                            -> PowerShell runtime deps (trixie names)
+#   tzdata                                                                    -> TZ support (trixie slim ships none)
+#   python3, python3-pip, python3-venv, python-is-python3                     -> Python
+#   gnupg                                                                     -> apt key handling
+# NOTE: PowerShell's runtime deps on Debian 13 are libicu76 + libssl3t64. The
+# bookworm names (libicu72 / libssl3) do not exist on trixie — libssl3 was
+# renamed by the 64-bit time_t transition.
 # ---------------------------------------------------------------------------
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         git ripgrep less procps openssh-client curl wget ca-certificates gnupg \
-        libicu72 libssl3 locales \
+        libicu76 libssl3t64 locales tzdata \
         python3 python3-pip python3-venv python-is-python3 \
-    # --- GitHub CLI (official apt repo) ---
+    # --- GitHub CLI (official apt repo; the repo line is codename-neutral) ---
     && mkdir -p -m 755 /etc/apt/keyrings \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
          -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
@@ -59,11 +75,11 @@ RUN pwsh -NoLogo -NonInteractive -File /tmp/install-psmodules.ps1 \
 # ---------------------------------------------------------------------------
 # Tailscale (for phone/remote access via Tailscale SSH) + tmux (detachable
 # sessions). tailscaled only runs when the entrypoint is told to (see below),
-# so this is dormant for local interactive use.
+# so this is dormant for local interactive use. trixie apt channel.
 # ---------------------------------------------------------------------------
-RUN curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg \
+RUN curl -fsSL https://pkgs.tailscale.com/stable/debian/trixie.noarmor.gpg \
         -o /usr/share/keyrings/tailscale-archive-keyring.gpg \
-    && curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-keyring.list \
+    && curl -fsSL https://pkgs.tailscale.com/stable/debian/trixie.tailscale-keyring.list \
         -o /etc/apt/sources.list.d/tailscale.list \
     && apt-get update \
     && apt-get install -y --no-install-recommends tailscale tmux \
@@ -72,10 +88,26 @@ RUN curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg \
     # the node user gets bash.
     && usermod -s /bin/bash node
 
-# Entrypoint conditionally brings up Tailscale, then runs the command.
+# ---------------------------------------------------------------------------
+# ttyd web terminal (optional; entrypoint starts it only when TTYD_ENABLE=1).
+# Installed from the pinned upstream static release binary rather than the
+# Debian package: the trixie ttyd package inherits util-linux's dropped nested
+# login support, and pinning the exact upstream version keeps builds
+# reproducible. The static musl binary runs fine on trixie. --writable (-W),
+# which the entrypoint uses, requires ttyd >= 1.7.
+# ---------------------------------------------------------------------------
+RUN curl -fsSL "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VERSION}/ttyd.x86_64" \
+        -o /usr/local/bin/ttyd \
+    && chmod +x /usr/local/bin/ttyd \
+    && ttyd --version
+
+# Entrypoint conditionally brings up Tailscale/ttyd, then runs the command.
+# healthcheck.sh backs the HEALTHCHECK below. Both are authored on Windows, so
+# strip CRLF and mark executable.
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh \
-    && chmod +x /usr/local/bin/entrypoint.sh
+COPY healthcheck.sh /usr/local/bin/healthcheck.sh
+RUN sed -i 's/\r$//' /usr/local/bin/entrypoint.sh /usr/local/bin/healthcheck.sh \
+    && chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/healthcheck.sh
 
 # ---------------------------------------------------------------------------
 # npm global prefix owned by "node", not root.
@@ -109,13 +141,18 @@ USER node
 
 # ---------------------------------------------------------------------------
 # Claude Code. No version pin — the entrypoint re-installs @latest on every
-# container start, so the baked-in version here is just a fallback for the
-# very first run / fully offline use.
+# container start (unless UPDATE_CLAUDE_ON_START=0), so the baked-in version
+# here is just a fallback for the very first run / fully offline use.
 # ---------------------------------------------------------------------------
 RUN npm install -g @anthropic-ai/claude-code \
     && npm cache clean --force
 
 WORKDIR /workspace
+
+# Healthcheck: with Tailscale enabled, verify the tailnet backend; otherwise a
+# basic liveness check. start-period covers tailscaled join + first update.
+HEALTHCHECK --interval=1m --timeout=10s --start-period=45s --retries=3 \
+    CMD ["/usr/local/bin/healthcheck.sh"]
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 # Default to launching Claude Code. Override with e.g. `bash` or `pwsh`.

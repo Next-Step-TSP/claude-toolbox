@@ -15,9 +15,16 @@ services:
       - claude-home:/home/node
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - UPDATE_CLAUDE_ON_START=${UPDATE_CLAUDE_ON_START:-1}
       # Space-separated account profiles -> claude-<name> commands + isolated
       # config dirs (~/.claude-<name>). Set up automatically by entrypoint.sh.
       - CLAUDE_PROFILES=${CLAUDE_PROFILES:-nstsp extra}
+      # Plugin bootstrap (blank = off; needs git/gh creds inside the container).
+      - CLAUDE_MARKETPLACES=${CLAUDE_MARKETPLACES:-}
+      - CLAUDE_PLUGINS=${CLAUDE_PLUGINS:-}
+      # ttyd web terminal (default off for local use).
+      - TTYD_ENABLE=${TTYD_ENABLE:-0}
+      - TTYD_PORT=${TTYD_PORT:-7681}
 
   # ---- Persistent remote box reachable from your phone via Tailscale SSH ----
   # Start with:  docker compose --profile remote up -d claude-remote
@@ -26,7 +33,7 @@ services:
     build: .
     image: ghcr.io/next-step-tsp/claude-toolbox:latest
     profiles: ["remote"]
-    # tailscaled needs root + a TUN device + NET_ADMIN.
+    # tailscaled needs root + a TUN device + NET_ADMIN (unless TS_USERSPACE=1).
     user: "0:0"
     cap_add:
       - NET_ADMIN
@@ -35,6 +42,9 @@ services:
     init: true
     restart: unless-stopped
     hostname: claude-code
+    # ttyd (when enabled) listens here; expose on the LAN/tailnet only.
+    ports:
+      - "${TTYD_PORT:-7681}:${TTYD_PORT:-7681}"
     environment:
       # Auth key from the Tailscale admin console (Settings > Keys). Needed only
       # on first launch; after that the persisted state re-authenticates.
@@ -42,10 +52,24 @@ services:
       - TS_ENABLE=1
       - TS_HOSTNAME=${TS_HOSTNAME:-claude-code}
       - TS_EXTRA_ARGS=${TS_EXTRA_ARGS:-}
+      - TS_USERSPACE=${TS_USERSPACE:-0}
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - UPDATE_CLAUDE_ON_START=${UPDATE_CLAUDE_ON_START:-1}
       # Space-separated account profiles -> claude-<name> commands + isolated
       # config dirs (~/.claude-<name>). Set up automatically by entrypoint.sh.
       - CLAUDE_PROFILES=${CLAUDE_PROFILES:-nstsp extra}
+      # Plugin bootstrap (blank = off; needs git/gh creds inside the container).
+      - CLAUDE_MARKETPLACES=${CLAUDE_MARKETPLACES:-}
+      - CLAUDE_PLUGINS=${CLAUDE_PLUGINS:-}
+      # ttyd web terminal. Default off; the Unraid template turns it on.
+      - TTYD_ENABLE=${TTYD_ENABLE:-0}
+      - TTYD_PORT=${TTYD_PORT:-7681}
+      # Unraid-style user/group/timezone remap (honoured because this service
+      # runs as root). Defaults preserve the image's uid/gid 1000 and UTC.
+      - PUID=${PUID:-}
+      - PGID=${PGID:-}
+      - TZ=${TZ:-}
+      - UMASK=${UMASK:-}
     volumes:
       - type: bind
         source: "${WORKSPACE_CLAUDE}"
