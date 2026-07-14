@@ -1,0 +1,63 @@
+services:
+  # ---- Local interactive use: docker compose run --rm claude ----
+  claude:
+    build: .
+    image: ghcr.io/next-step-tsp/claude-toolbox:latest
+    stdin_open: true
+    tty: true
+    volumes:
+      - type: bind
+        source: "${WORKSPACE_CLAUDE}"
+        target: /workspace/_Claude
+      - type: bind
+        source: "${WORKSPACE_PALLAS}"
+        target: /workspace/_pallas
+      - claude-home:/home/node
+    environment:
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Space-separated account profiles -> claude-<name> commands + isolated
+      # config dirs (~/.claude-<name>). Set up automatically by entrypoint.sh.
+      - CLAUDE_PROFILES=${CLAUDE_PROFILES:-nstsp extra}
+
+  # ---- Persistent remote box reachable from your phone via Tailscale SSH ----
+  # Start with:  docker compose --profile remote up -d claude-remote
+  # Then SSH in from anywhere on your tailnet:  ssh node@claude-code
+  claude-remote:
+    build: .
+    image: ghcr.io/next-step-tsp/claude-toolbox:latest
+    profiles: ["remote"]
+    # tailscaled needs root + a TUN device + NET_ADMIN.
+    user: "0:0"
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    init: true
+    restart: unless-stopped
+    hostname: claude-code
+    environment:
+      # Auth key from the Tailscale admin console (Settings > Keys). Needed only
+      # on first launch; after that the persisted state re-authenticates.
+      - TS_AUTHKEY=${TS_AUTHKEY:-}
+      - TS_ENABLE=1
+      - TS_HOSTNAME=${TS_HOSTNAME:-claude-code}
+      - TS_EXTRA_ARGS=${TS_EXTRA_ARGS:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      # Space-separated account profiles -> claude-<name> commands + isolated
+      # config dirs (~/.claude-<name>). Set up automatically by entrypoint.sh.
+      - CLAUDE_PROFILES=${CLAUDE_PROFILES:-nstsp extra}
+    volumes:
+      - type: bind
+        source: "${WORKSPACE_CLAUDE}"
+        target: /workspace/_Claude
+      - type: bind
+        source: "${WORKSPACE_PALLAS}"
+        target: /workspace/_pallas
+      - claude-home:/home/node
+      - tailscale-state:/var/lib/tailscale
+    # Keep the container alive; you SSH in and run claude/tmux yourself.
+    command: ["sleep", "infinity"]
+
+volumes:
+  claude-home:
+  tailscale-state:

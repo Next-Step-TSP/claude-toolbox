@@ -1,0 +1,4 @@
+.env
+*.log
+workspace/
+.claude/settings.local.json
