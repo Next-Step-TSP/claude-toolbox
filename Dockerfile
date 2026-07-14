@@ -5,7 +5,7 @@
 # Base: Node.js 24 (Active LTS) on Debian 13 "trixie". Node 24 is the runtime
 # Claude Code needs; trixie is the current Debian stable and the required
 # foundation now that PowerShell dropped Debian 12 support (2026-06-10).
-FROM node:24-trixie-slim
+FROM node:26-trixie-slim
 
 # OCI metadata (links the GHCR package back to the repo for provenance).
 LABEL org.opencontainers.image.source="https://github.com/Next-Step-TSP/claude-toolbox" \
