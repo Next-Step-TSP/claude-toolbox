@@ -4,6 +4,20 @@ Docker image for NSTSP's standard Claude Code + M365/Azure PowerShell toolbox.
 See `README.md` for full architecture, env vars, and runbooks — this file only
 covers what isn't obvious from reading the code.
 
+## FROZEN — do not edit the container assets here
+
+`Dockerfile`, `docker-compose.yml`, `entrypoint.sh`, `healthcheck.sh`,
+`install-psmodules.ps1` and `.env.example` are **frozen**. Refactored copies are
+maintained in `claude-ssh-solutions/docker/`. Make changes there and, if the
+image needs rebuilding, read that repo's "Open question: who publishes the
+image" first — `.github/workflows/publish.yml` here still pushes the tag the
+live Unraid node pulls.
+
+`remote.ps1` is deprecated in favour of
+`claude-ssh-solutions\Setup-ClaudeDockerHost.ps1`. `run.ps1` and
+`docs/UNRAID.md` are still current. See the status table at the top of
+`README.md` for the full mapping.
+
 ## No test suite
 
 There's no local test/lint command. CI (`.github/workflows/publish.yml`) only

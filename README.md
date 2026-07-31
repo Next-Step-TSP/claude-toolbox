@@ -1,5 +1,34 @@
 # claude-toolbox
 
+> ## Status: partially superseded by `claude-ssh-solutions`
+>
+> The container assets in this repo — `Dockerfile`, `docker-compose.yml`, `entrypoint.sh`,
+> `healthcheck.sh`, `install-psmodules.ps1`, `.env.example` — are now **frozen**. Refactored copies
+> live in `claude-ssh-solutions/docker/` and that is where they are maintained. Edit them there.
+>
+> | Here | Status | There |
+> | --- | --- | --- |
+> | container assets (above) | **frozen** | `docker/` |
+> | `remote.ps1` | **deprecated** | `Setup-ClaudeDockerHost.ps1` |
+> | §"Remote / phone access (Tailscale SSH)" + ConnectBot setup, below | **deprecated** | `docs/ANDROID.md` — leads with Remote Control, which needs no SSH and no VPN |
+> | ttyd on 7681 as the phone surface | **deprecated for phone use** | Remote Control. ttyd is loopback-bound by default there — it runs `--writable` with **no authentication** |
+> | `docker volume rm docker_claude-home` (below, and `docs/UNRAID.md` §6) | **factually wrong** — the `docker_` prefix predates the rename to `claude-toolbox` and matches nothing | the new compose file pins `name: claude-toolbox`, so the volumes are `claude-toolbox_claude-home` and `claude-toolbox_tailscale-state` |
+> | `run.ps1` | still useful | — |
+> | `docs/UNRAID.md` | **still authoritative** for the live node | only the image source moves |
+>
+> Also fixed there: the workspace bind mounts had no defaults, so `docker compose` failed immediately
+> on any machine without the SharePoint/OneDrive folders synced; and nothing started a tmux server, so
+> the first attach after every container start was a manual `tmux new -A -s work`.
+>
+> **Not changed:** `.github/workflows/publish.yml` still builds and pushes
+> `ghcr.io/next-step-tsp/claude-toolbox:latest`, which the live Unraid node pulls. Whether that
+> workflow moves is an open decision — if both repos build the same tag, Unraid gets whichever ran
+> last. See "Open question: who publishes the image" in the new repo's README.
+>
+> The Windows side of remote access is **not** in this repo at all: `claude-ssh-solutions` sets up
+> direct SSH into a Windows machine with no container involved, using Claude Code's own
+> `--bg` / `attach` background sessions instead of tmux.
+
 NSTSP's standard [Claude Code](https://www.anthropic.com/claude-code) image: a
 Linux container that runs Claude Code alongside an M365/Azure PowerShell
 administration toolbox, with baked-in Tailscale SSH for remote/phone access.

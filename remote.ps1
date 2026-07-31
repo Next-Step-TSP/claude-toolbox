@@ -1,6 +1,23 @@
 <#
 .SYNOPSIS
+  DEPRECATED - superseded by claude-ssh-solutions\Setup-ClaudeDockerHost.ps1.
+
   Manage the persistent Tailscale-connected Claude Code box (for phone access).
+
+.NOTES
+  DEPRECATED. Use claude-ssh-solutions\Setup-ClaudeDockerHost.ps1 instead. It does the same
+  up/down/status job against a refactored compose file that additionally:
+    - pins the Compose project name, so volume names are stable (the `docker_claude-home` name
+      referenced in this repo's docs predates a directory rename and matches nothing)
+    - defaults the workspace bind mounts, so it no longer fails on a machine without the
+      SharePoint/OneDrive folders synced
+    - creates the tmux 'work' session at container boot instead of on first manual attach
+    - binds ttyd to loopback by default (it runs --writable with NO authentication)
+
+  For phone access specifically, prefer Remote Control over SSH entirely - it needs no inbound
+  ports and no VPN. See claude-ssh-solutions\docs\ANDROID.md.
+
+  This script still works and is left in place for the existing Unraid deployment.
 
 .DESCRIPTION
   Wraps the "remote" compose profile. On first run, put TS_AUTHKEY in a .env
